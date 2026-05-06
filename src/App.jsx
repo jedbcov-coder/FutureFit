@@ -101,6 +101,35 @@ function useJungleStars(canvasRef, audioRef, seed) {
   }, [audioRef, canvasRef, seed])
 }
 
+function useDebugPerformanceMetrics() {
+  const [metrics, setMetrics] = useState({ fps: 0, dpr: 1 })
+
+  useEffect(() => {
+    let frameId = 0
+    let frames = 0
+    let lastSample = performance.now()
+
+    const sample = (time) => {
+      frames += 1
+      if (time - lastSample >= 500) {
+        const elapsedSeconds = (time - lastSample) / 1000
+        setMetrics({
+          fps: Math.round(frames / Math.max(elapsedSeconds, 0.001)),
+          dpr: Number((window.devicePixelRatio || 1).toFixed(2)),
+        })
+        frames = 0
+        lastSample = time
+      }
+      frameId = requestAnimationFrame(sample)
+    }
+
+    frameId = requestAnimationFrame(sample)
+    return () => cancelAnimationFrame(frameId)
+  }, [])
+
+  return metrics
+}
+
 function setChanged(setter, nextValue) {
   setter((current) => (Object.is(current, nextValue) ? current : nextValue))
 }
@@ -126,6 +155,7 @@ function App() {
   const [debug, setDebug] = useState(false)
   const [runSeed, setRunSeed] = useState(() => createRunSeed())
   const [message, setMessage] = useState('Tap Start, then dodge vines and grab peanuts!')
+  const performanceMetrics = useDebugPerformanceMetrics()
   const canvasRef = useRef(null)
   const audioRef = useRef(null)
   const nextId = useRef(1)
@@ -406,6 +436,7 @@ function App() {
                   <div key={`${collider.id}-debug`} className="debug-collider" style={debugColliderStyle(collider)} />
                 ))}
                 <div className="debug-collider-text">
+                  <p>FPS {performanceMetrics.fps} · DPR {performanceMetrics.dpr}</p>
                   <p>Colliders active: {debugColliders.entities.length + 1}</p>
                   <p>{debugColliderText(debugColliders.player)}</p>
                   {debugColliders.entities.slice(0, 6).map((collider) => (
