@@ -25,6 +25,12 @@ function restoreEntityFlags(entities) {
   return entities.map((entity) => ({ ...entity, active: true, visible: true }))
 }
 
+const ALLOWED_KEY_CODES = new Set(['Enter', 'Space', 'ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'KeyG'])
+
+function isAllowedKey(code) {
+  return ALLOWED_KEY_CODES.has(code)
+}
+
 function useJungleStars(canvasRef, audioRef, seed) {
   useEffect(() => {
     const canvas = canvasRef.current
@@ -126,30 +132,59 @@ function App() {
     setHealth(nextBody.health)
     setLives(nextBody.lives)
     setStatus('playing')
-    setMessage(`Use ← → or A/D to dash through the jungle! Seed ${nextSeed}`)
+    setMessage(`Use ←/A and →/D to steer, W to charge, and S to slide. Seed ${nextSeed}`)
     console.debug('FutureFit run seed', nextSeed)
   }, [requestedSeed])
 
   useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
+    const keyDown = (e) => {
+      if (!isAllowedKey(e.code)) return
+      e.preventDefault()
+
+      if (e.code === 'Enter' || e.code === 'Space') {
         if (status !== 'playing') resetGame()
+        return
+      }
+
+      if (e.code === 'KeyG') {
+        setDebug((current) => !current)
         return
       }
 
       if (status !== 'playing') return
 
-      if (event.key === 'ArrowLeft' || event.key.toLowerCase() === 'a') {
+      if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
         setLaneIndex((current) => clamp(current - 1, 0, LANES.length - 1))
+        return
       }
 
-      if (event.key === 'ArrowRight' || event.key.toLowerCase() === 'd') {
+      if (e.code === 'ArrowRight' || e.code === 'KeyD') {
         setLaneIndex((current) => clamp(current + 1, 0, LANES.length - 1))
+        return
+      }
+
+      if (e.code === 'KeyW') {
+        setMessage('Charge forward! Keep dodging jungle hazards.')
+        return
+      }
+
+      if (e.code === 'KeyS') {
+        setMessage('Slide low! Watch for the next opening.')
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    const keyUp = (e) => {
+      if (!isAllowedKey(e.code)) return
+      e.preventDefault()
+    }
+
+    const keyOptions = { passive: false }
+    window.addEventListener('keydown', keyDown, keyOptions)
+    window.addEventListener('keyup', keyUp, keyOptions)
+    return () => {
+      window.removeEventListener('keydown', keyDown, keyOptions)
+      window.removeEventListener('keyup', keyUp, keyOptions)
+    }
   }, [resetGame, status])
 
   useEffect(() => {
@@ -334,7 +369,7 @@ function App() {
                 →
               </button>
             </div>
-            <p className="text-xs text-lime-100/80">Dodge logs and bananas. Peanuts give one shield hit.</p>
+            <p className="text-xs text-lime-100/80">Controls: ←/A and →/D steer • W charge • S slide • Enter/Space start • G debug.</p>
             <p className="text-[0.65rem] text-lime-100/60" data-debug-seed={runSeed}>Debug seed {runSeed}</p>
           </footer>
         </div>
