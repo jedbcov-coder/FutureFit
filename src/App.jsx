@@ -4,6 +4,25 @@ import { createJungleStarsScene } from './game/createScene.js'
 import { laneToPercent, clamp } from './game/math.js'
 import { collectPowerUp, findLaneContact, frameDelta, updatePhysics } from './game/updatePhysics.js'
 
+export function createInitialBody() {
+  return {
+    laneIndex: 1,
+    playerPosition: { lane: LANES[1], y: PLAYER_Y },
+    health: 3,
+    lives: 3,
+    score: 0,
+    crates: 0,
+    shield: 0,
+    pickups: [],
+    colliders: [],
+    timers: { lastTime: 0, spawnTimer: 0, peanutTimer: 0 },
+  }
+}
+
+function restoreEntityFlags(entities) {
+  return entities.map((entity) => ({ ...entity, active: true, visible: true }))
+}
+
 function useJungleStars(canvasRef) {
   useEffect(() => {
     const canvas = canvasRef.current
@@ -30,21 +49,31 @@ function useJungleStars(canvasRef) {
 }
 
 function App() {
-  const [laneIndex, setLaneIndex] = useState(1)
-  const [obstacles, setObstacles] = useState([])
-  const [powerUps, setPowerUps] = useState([])
-  const [score, setScore] = useState(0)
+  const bodyRef = useRef(createInitialBody())
+  const [laneIndex, setLaneIndex] = useState(bodyRef.current.laneIndex)
+  const [obstacles, setObstacles] = useState(bodyRef.current.colliders)
+  const [powerUps, setPowerUps] = useState(bodyRef.current.pickups)
+  const [score, setScore] = useState(bodyRef.current.score)
   const [finalStats, setFinalStats] = useState(null)
   const [complete, setComplete] = useState(false)
   const [bestScore, setBestScore] = useState(() => Number(localStorage.getItem(BEST_SCORE_KEY) || 0))
   const [status, setStatus] = useState('ready')
-  const [shield, setShield] = useState(0)
+  const [shield, setShield] = useState(bodyRef.current.shield)
+  const [health, setHealth] = useState(bodyRef.current.health)
+  const [lives, setLives] = useState(bodyRef.current.lives)
+  const [crates, setCrates] = useState(bodyRef.current.crates)
+  const [started, setStarted] = useState(false)
+  const [gameOver, setGameOver] = useState(false)
+  const [debug, setDebug] = useState(false)
   const [message, setMessage] = useState('Tap Start, then dodge vines and grab peanuts!')
   const canvasRef = useRef(null)
   const nextId = useRef(1)
+  const startedRef = useRef(false)
+  const completeRef = useRef(false)
+  const gameOverRef = useRef(false)
   const gameStartTimeRef = useRef(0)
-  const activeHudStatsRef = useRef({ fruit: 0, crates: 0 })
-  const gameState = useRef({ lastTime: 0, spawnTimer: 0, peanutTimer: 0 })
+  const activeHudStatsRef = useRef({ fruit: bodyRef.current.score, crates: bodyRef.current.crates })
+  const gameState = useRef(bodyRef.current.timers)
 
   useJungleStars(canvasRef)
 
@@ -53,24 +82,41 @@ function App() {
 
   const completeRun = useCallback(({ fruit, crates }) => {
     const elapsedSeconds = gameStartTimeRef.current ? Math.max(0, Math.round((performance.now() - gameStartTimeRef.current) / 1000)) : 0
+    completeRef.current = true
     setFinalStats({ fruit, crates, elapsedSeconds })
     setComplete(true)
   }, [])
 
-  const resetGame = () => {
-    setLaneIndex(1)
-    setObstacles([])
-    setPowerUps([])
-    setScore(0)
+  const resetGame = useCallback(() => {
+    const nextBody = createInitialBody()
+    nextBody.pickups = restoreEntityFlags(nextBody.pickups)
+    nextBody.colliders = restoreEntityFlags(nextBody.colliders)
+
+    bodyRef.current = nextBody
+    startedRef.current = true
+    completeRef.current = false
+    gameOverRef.current = false
+    gameStartTimeRef.current = performance.now()
+    gameState.current = { ...nextBody.timers }
+    activeHudStatsRef.current = { fruit: nextBody.score, crates: nextBody.crates }
+    nextId.current = 1
+
+    setLaneIndex(nextBody.laneIndex)
+    setObstacles(nextBody.colliders)
+    setPowerUps(nextBody.pickups)
+    setScore(nextBody.score)
+    setCrates(nextBody.crates)
     setFinalStats(null)
     setComplete(false)
-    setShield(0)
+    setGameOver(false)
+    setStarted(true)
+    setDebug(false)
+    setShield(nextBody.shield)
+    setHealth(nextBody.health)
+    setLives(nextBody.lives)
     setStatus('playing')
     setMessage('Use ← → or A/D to dash through the jungle!')
-    gameStartTimeRef.current = performance.now()
-    activeHudStatsRef.current = { fruit: 0, crates: 0 }
-    gameState.current = { lastTime: 0, spawnTimer: 0, peanutTimer: 0 }
-  }
+  }, [])
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -92,7 +138,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [status])
+  }, [resetGame, status])
 
   useEffect(() => {
     if (status !== 'playing') return undefined
@@ -117,10 +163,23 @@ function App() {
       state.spawnTimer = nextFrame.timers.spawnTimer
       state.peanutTimer = nextFrame.timers.peanutTimer
       nextId.current = nextFrame.nextId
-      activeHudStatsRef.current = { fruit: nextFrame.score, crates: nextFrame.obstacles.length }
-      setObstacles(nextFrame.obstacles)
-      setPowerUps(nextFrame.powerUps)
+      const nextCrates = nextFrame.obstacles.length
+      bodyRef.current = {
+        ...bodyRef.current,
+        laneIndex,
+        playerPosition: { lane: playerLane, y: PLAYER_Y },
+        score: nextFrame.score,
+        crates: nextCrates,
+        shield: nextFrame.shield,
+        pickups: restoreEntityFlags(nextFrame.powerUps),
+        colliders: restoreEntityFlags(nextFrame.obstacles),
+        timers: { ...nextFrame.timers },
+      }
+      activeHudStatsRef.current = { fruit: nextFrame.score, crates: nextCrates }
+      setObstacles(bodyRef.current.colliders)
+      setPowerUps(bodyRef.current.pickups)
       setScore(nextFrame.score)
+      setCrates(nextCrates)
       setShield(nextFrame.shield)
 
       frameId = requestAnimationFrame(tick)
@@ -128,7 +187,7 @@ function App() {
 
     frameId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frameId)
-  }, [obstacles, powerUps, score, shield, speed, status])
+  }, [laneIndex, obstacles, playerLane, powerUps, score, shield, speed, status])
 
   useEffect(() => {
     if (status !== 'playing') return
@@ -137,13 +196,25 @@ function App() {
     if (!hit) return
 
     if (shield > 0) {
-      setObstacles((current) => current.filter((obstacle) => obstacle.id !== hit.id))
+      setObstacles((current) => {
+        const nextColliders = restoreEntityFlags(current.filter((obstacle) => obstacle.id !== hit.id))
+        bodyRef.current = { ...bodyRef.current, colliders: nextColliders, crates: nextColliders.length, shield: 0 }
+        activeHudStatsRef.current = { ...activeHudStatsRef.current, crates: nextColliders.length }
+        setCrates(nextColliders.length)
+        return nextColliders
+      })
       setShield(0)
       setMessage('Peanut shield smashed through danger!')
       return
     }
 
     const body = activeHudStatsRef.current
+    gameOverRef.current = true
+    bodyRef.current = { ...bodyRef.current, health: 0, lives: 0 }
+    setHealth(0)
+    setLives(0)
+    setGameOver(true)
+    setStarted(false)
     completeRun({ fruit: body.fruit, crates: body.crates })
     setStatus('ended')
     setBestScore((current) => {
@@ -161,15 +232,22 @@ function App() {
     if (!pickup) return
 
     const collected = collectPowerUp(powerUps, pickup, score)
+    const nextPickups = restoreEntityFlags(collected.powerUps)
+    bodyRef.current = {
+      ...bodyRef.current,
+      pickups: nextPickups,
+      score: collected.score,
+      shield: collected.shield,
+    }
     activeHudStatsRef.current = { ...activeHudStatsRef.current, fruit: collected.score }
-    setPowerUps(collected.powerUps)
+    setPowerUps(nextPickups)
     setShield(collected.shield)
     setScore(collected.score)
     setMessage('Crunch! Peanut shield active for five seconds.')
   }, [playerLane, powerUps, score, status])
 
   return (
-    <main className="h-screen bg-[#132516] text-white overflow-hidden flex items-center justify-center p-4">
+    <main className="h-screen bg-[#132516] text-white overflow-hidden flex items-center justify-center p-4" data-started={started} data-debug={debug}>
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full opacity-70" aria-hidden="true" />
       <section className="relative game-shell rounded-[2rem] border border-white/20 shadow-2xl overflow-hidden">
         <div className="absolute inset-0 jungle-gradient" />
@@ -208,7 +286,11 @@ function App() {
               </div>
             ))}
 
-            <div className={`absolute player ${shield > 0 ? 'shielded' : ''}`} style={{ left: `${laneToPercent(playerLane)}%`, top: `${PLAYER_Y}%` }}>
+            <div
+              className={`absolute player ${shield > 0 ? 'shielded' : ''}`}
+              style={{ left: `${laneToPercent(playerLane)}%`, top: `${PLAYER_Y}%` }}
+              aria-label={`Elephant health ${health}, lives ${lives}, crates ${crates}`}
+            >
               <span className="shadow-bubble rounded-full">🐘</span>
             </div>
 
@@ -232,7 +314,7 @@ function App() {
                 ←
               </button>
               <button className="start-button rounded-full px-7 py-3 font-black" onClick={resetGame}>
-                {status === 'playing' ? 'Restart' : 'Start dash'}
+                {status === 'playing' ? 'Restart' : gameOver ? 'Try Again' : 'Start dash'}
               </button>
               <button className="control rounded-full" onClick={() => setLaneIndex((current) => clamp(current + 1, 0, LANES.length - 1))} disabled={status !== 'playing'}>
                 →
