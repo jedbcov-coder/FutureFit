@@ -26,7 +26,7 @@ function useJungleStars(canvasRef) {
       window.removeEventListener('resize', jungleScene.resize)
       jungleScene.dispose()
     }
-  }, [canvasRef])
+  }, [])
 }
 
 function App() {
