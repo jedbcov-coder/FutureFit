@@ -25,6 +25,17 @@ function restoreEntityFlags(entities) {
   return entities.map((entity) => ({ ...entity, active: true, visible: true }))
 }
 
+const createInitialInputState = () => ({
+  left: false,
+  right: false,
+  charge: false,
+  space: false,
+  jumpSlide: false,
+  smash: false,
+})
+
+const SPACE_HOLD_THRESHOLD_MS = 240
+
 function useJungleStars(canvasRef, audioRef, seed) {
   useEffect(() => {
     const canvas = canvasRef.current
@@ -80,6 +91,9 @@ function App() {
   const activeHudStatsRef = useRef({ fruit: bodyRef.current.score, crates: bodyRef.current.crates })
   const gameState = useRef(bodyRef.current.timers)
   const rngRef = useRef(createRng(runSeed))
+  const keyRef = useRef(createInitialInputState())
+  const touchPointersRef = useRef(new Map())
+  const jumpSlideHoldTimerRef = useRef(0)
   const requestedSeed = useMemo(() => seedFromSearch(globalThis.location?.search ?? ''), [])
 
   useJungleStars(canvasRef, audioRef, runSeed)
@@ -110,6 +124,9 @@ function App() {
     rngRef.current = createRng(nextSeed)
     activeHudStatsRef.current = { fruit: nextBody.score, crates: nextBody.crates }
     nextId.current = 1
+    keyRef.current = createInitialInputState()
+    touchPointersRef.current.clear()
+    window.clearTimeout(jumpSlideHoldTimerRef.current)
 
     setRunSeed(nextSeed)
     setLaneIndex(nextBody.laneIndex)
@@ -126,31 +143,136 @@ function App() {
     setHealth(nextBody.health)
     setLives(nextBody.lives)
     setStatus('playing')
-    setMessage(`Use ← → or A/D to dash through the jungle! Seed ${nextSeed}`)
+    setMessage(`Use ← →, A/D, or the touch controls to dash through the jungle! Seed ${nextSeed}`)
     console.debug('FutureFit run seed', nextSeed)
   }, [requestedSeed])
 
+  const moveLane = useCallback((direction) => {
+    setLaneIndex((current) => clamp(current + direction, 0, LANES.length - 1))
+  }, [])
+
+  const setInputState = useCallback((input, active) => {
+    keyRef.current[input] = active
+
+    if (input === 'jumpSlide') {
+      keyRef.current.space = active
+    }
+  }, [])
+
+  const pulseInput = useCallback((input) => {
+    setInputState(input, true)
+    window.setTimeout(() => setInputState(input, false), 140)
+  }, [setInputState])
+
+  const startJumpSlideInput = useCallback(() => {
+    setInputState('jumpSlide', true)
+    window.clearTimeout(jumpSlideHoldTimerRef.current)
+    jumpSlideHoldTimerRef.current = window.setTimeout(() => {
+      if (keyRef.current.jumpSlide) {
+        setMessage('Holding jump/slide: elephant keeps low and ready, just like holding Space.')
+      }
+    }, SPACE_HOLD_THRESHOLD_MS)
+  }, [setInputState])
+
+  const endJumpSlideInput = useCallback(() => {
+    const wasHolding = keyRef.current.jumpSlide
+    setInputState('jumpSlide', false)
+    window.clearTimeout(jumpSlideHoldTimerRef.current)
+
+    if (wasHolding && status === 'playing') {
+      setMessage('Jump/slide tapped: Space action released.')
+    }
+  }, [setInputState, status])
+
+  const clearPointerInput = useCallback((pointerId) => {
+    const input = touchPointersRef.current.get(pointerId)
+    if (!input) return
+
+    touchPointersRef.current.delete(pointerId)
+
+    if (input === 'jumpSlide') {
+      endJumpSlideInput()
+      return
+    }
+
+    setInputState(input, false)
+  }, [endJumpSlideInput, setInputState])
+
+  const startTouchInput = useCallback((input, event) => {
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    touchPointersRef.current.set(event.pointerId, input)
+
+    if (input === 'jumpSlide') {
+      startJumpSlideInput()
+      return
+    }
+
+    setInputState(input, true)
+
+    if (status !== 'playing') return
+
+    if (input === 'left') moveLane(-1)
+    if (input === 'right') moveLane(1)
+    if (input === 'charge') setMessage('Charge primed! Keep holding while you line up the lane.')
+    if (input === 'smash') setMessage('Smash tapped! Peanut shields still auto-smash obstacles.')
+  }, [moveLane, setInputState, startJumpSlideInput, status])
+
+  const endTouchInput = useCallback((event) => {
+    event.preventDefault()
+    clearPointerInput(event.pointerId)
+  }, [clearPointerInput])
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(jumpSlideHoldTimerRef.current)
+    }
+  }, [])
+
   useEffect(() => {
     const handleKeyDown = (event) => {
+      const normalizedKey = event.key.toLowerCase()
+
       if (event.key === 'Enter' || event.key === ' ') {
         if (status !== 'playing') resetGame()
+      }
+
+      if (event.key === ' ') {
+        if (!keyRef.current.jumpSlide) startJumpSlideInput()
         return
       }
 
-      if (status !== 'playing') return
+      if (event.repeat || status !== 'playing') return
 
-      if (event.key === 'ArrowLeft' || event.key.toLowerCase() === 'a') {
-        setLaneIndex((current) => clamp(current - 1, 0, LANES.length - 1))
+      if (event.key === 'ArrowLeft' || normalizedKey === 'a') {
+        pulseInput('left')
+        moveLane(-1)
       }
 
-      if (event.key === 'ArrowRight' || event.key.toLowerCase() === 'd') {
-        setLaneIndex((current) => clamp(current + 1, 0, LANES.length - 1))
+      if (event.key === 'ArrowRight' || normalizedKey === 'd') {
+        pulseInput('right')
+        moveLane(1)
       }
+
+      if (normalizedKey === 'shift') setInputState('charge', true)
+      if (normalizedKey === 's') setInputState('smash', true)
+    }
+
+    const handleKeyUp = (event) => {
+      const normalizedKey = event.key.toLowerCase()
+
+      if (event.key === ' ') endJumpSlideInput()
+      if (normalizedKey === 'shift') setInputState('charge', false)
+      if (normalizedKey === 's') setInputState('smash', false)
     }
 
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [resetGame, status])
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [endJumpSlideInput, moveLane, pulseInput, resetGame, setInputState, startJumpSlideInput, status])
 
   useEffect(() => {
     if (status !== 'playing') return undefined
@@ -322,21 +444,94 @@ function App() {
           </div>
 
           <footer className="space-y-4 text-center">
+            {status !== 'playing' && (
+              <div className="mobile-controls-note rounded-2xl">
+                <p className="text-xs uppercase tracking-[0.35em] text-lime-200">Mobile controls</p>
+                <p className="text-xs text-lime-100/80">Use the bottom touch pad: steer left/right, hold Charge, tap or hold Jump/Slide like Space, and tap Smash.</p>
+              </div>
+            )}
             <p className="min-h-6 text-sm text-lime-50">{message}</p>
             <div className="flex items-center justify-center gap-3">
-              <button className="control rounded-full" onClick={() => setLaneIndex((current) => clamp(current - 1, 0, LANES.length - 1))} disabled={status !== 'playing'}>
+              <button className="control rounded-full" onClick={() => moveLane(-1)} disabled={status !== 'playing'}>
                 ←
               </button>
               <button className="start-button rounded-full px-7 py-3 font-black" onClick={resetGame}>
                 {status === 'playing' ? 'Restart' : gameOver ? 'Try Again' : 'Start dash'}
               </button>
-              <button className="control rounded-full" onClick={() => setLaneIndex((current) => clamp(current + 1, 0, LANES.length - 1))} disabled={status !== 'playing'}>
+              <button className="control rounded-full" onClick={() => moveLane(1)} disabled={status !== 'playing'}>
                 →
               </button>
             </div>
             <p className="text-xs text-lime-100/80">Dodge logs and bananas. Peanuts give one shield hit.</p>
             <p className="text-[0.65rem] text-lime-100/60" data-debug-seed={runSeed}>Debug seed {runSeed}</p>
           </footer>
+        </div>
+
+        <div className="touch-controls" aria-label="Touch game controls">
+          <div className="touch-steer" aria-label="Steering controls">
+            <button
+              className="touch-control touch-steer-button"
+              type="button"
+              aria-label="Steer left"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('left', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              ←
+            </button>
+            <button
+              className="touch-control touch-steer-button"
+              type="button"
+              aria-label="Steer right"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('right', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              →
+            </button>
+          </div>
+          <div className="touch-actions" aria-label="Action controls">
+            <button
+              className="touch-control touch-action-button"
+              type="button"
+              aria-label="Charge"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('charge', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              Charge
+            </button>
+            <button
+              className="touch-control touch-action-button touch-action-primary"
+              type="button"
+              aria-label="Jump or slide"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('jumpSlide', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              Jump/Slide
+            </button>
+            <button
+              className="touch-control touch-action-button"
+              type="button"
+              aria-label="Smash"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('smash', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              Smash
+            </button>
+          </div>
         </div>
       </section>
     </main>
