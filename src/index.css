@@ -190,3 +190,15 @@ button {
   .game-shell { min-height: 100%; }
   .h-\[62vh\] { height: 54vh; }
 }
+
+.complete-screen {
+  gap: 0.75rem;
+  background: rgb(5 20 9 / 0.82);
+  backdrop-filter: blur(10px);
+}
+
+.complete-stats {
+  min-width: 12rem;
+  background: rgb(255 255 255 / 0.12);
+  border: 1px solid rgb(217 249 157 / 0.24);
+}

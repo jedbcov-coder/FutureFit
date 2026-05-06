@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BEST_SCORE_KEY, LANES, PLAYER_Y, START_SPEED } from './game/config.js'
 import { createJungleStarsScene } from './game/createScene.js'
 import { laneToPercent, clamp } from './game/math.js'
@@ -34,12 +34,16 @@ function App() {
   const [obstacles, setObstacles] = useState([])
   const [powerUps, setPowerUps] = useState([])
   const [score, setScore] = useState(0)
+  const [finalStats, setFinalStats] = useState(null)
+  const [complete, setComplete] = useState(false)
   const [bestScore, setBestScore] = useState(() => Number(localStorage.getItem(BEST_SCORE_KEY) || 0))
   const [status, setStatus] = useState('ready')
   const [shield, setShield] = useState(0)
   const [message, setMessage] = useState('Tap Start, then dodge vines and grab peanuts!')
   const canvasRef = useRef(null)
   const nextId = useRef(1)
+  const gameStartTimeRef = useRef(0)
+  const activeHudStatsRef = useRef({ fruit: 0, crates: 0 })
   const gameState = useRef({ lastTime: 0, spawnTimer: 0, peanutTimer: 0 })
 
   useJungleStars(canvasRef)
@@ -47,14 +51,24 @@ function App() {
   const speed = useMemo(() => START_SPEED + Math.min(score / 900, 3.8), [score])
   const playerLane = LANES[laneIndex]
 
+  const completeRun = useCallback(({ fruit, crates }) => {
+    const elapsedSeconds = gameStartTimeRef.current ? Math.max(0, Math.round((performance.now() - gameStartTimeRef.current) / 1000)) : 0
+    setFinalStats({ fruit, crates, elapsedSeconds })
+    setComplete(true)
+  }, [])
+
   const resetGame = () => {
     setLaneIndex(1)
     setObstacles([])
     setPowerUps([])
     setScore(0)
+    setFinalStats(null)
+    setComplete(false)
     setShield(0)
     setStatus('playing')
     setMessage('Use ← → or A/D to dash through the jungle!')
+    gameStartTimeRef.current = performance.now()
+    activeHudStatsRef.current = { fruit: 0, crates: 0 }
     gameState.current = { lastTime: 0, spawnTimer: 0, peanutTimer: 0 }
   }
 
@@ -103,6 +117,7 @@ function App() {
       state.spawnTimer = nextFrame.timers.spawnTimer
       state.peanutTimer = nextFrame.timers.peanutTimer
       nextId.current = nextFrame.nextId
+      activeHudStatsRef.current = { fruit: nextFrame.score, crates: nextFrame.obstacles.length }
       setObstacles(nextFrame.obstacles)
       setPowerUps(nextFrame.powerUps)
       setScore(nextFrame.score)
@@ -128,14 +143,16 @@ function App() {
       return
     }
 
+    const body = activeHudStatsRef.current
+    completeRun({ fruit: body.fruit, crates: body.crates })
     setStatus('ended')
     setBestScore((current) => {
-      const nextBest = Math.max(current, score)
+      const nextBest = Math.max(current, body.fruit)
       localStorage.setItem(BEST_SCORE_KEY, String(nextBest))
       return nextBest
     })
     setMessage('Oof! The jungle got tangled. Press Enter to try again.')
-  }, [obstacles, playerLane, score, shield, status])
+  }, [completeRun, obstacles, playerLane, shield, status])
 
   useEffect(() => {
     if (status !== 'playing') return
@@ -144,6 +161,7 @@ function App() {
     if (!pickup) return
 
     const collected = collectPowerUp(powerUps, pickup, score)
+    activeHudStatsRef.current = { ...activeHudStatsRef.current, fruit: collected.score }
     setPowerUps(collected.powerUps)
     setShield(collected.shield)
     setScore(collected.score)
@@ -193,6 +211,18 @@ function App() {
             <div className={`absolute player ${shield > 0 ? 'shielded' : ''}`} style={{ left: `${laneToPercent(playerLane)}%`, top: `${PLAYER_Y}%` }}>
               <span className="shadow-bubble rounded-full">🐘</span>
             </div>
+
+            {complete && finalStats && (
+              <div className="absolute inset-0 complete-screen flex flex-col items-center justify-center text-center">
+                <p className="text-xs uppercase tracking-[0.35em] text-lime-200">Run complete</p>
+                <h2 className="text-3xl font-black leading-tight">Jungle dash stats</h2>
+                <div className="complete-stats rounded-2xl px-4 py-3">
+                  <p className="text-sm text-lime-50">Fruit {finalStats.fruit}</p>
+                  <p className="text-sm text-lime-50">Crates {finalStats.crates}</p>
+                  <p className="text-sm text-lime-50">Time {finalStats.elapsedSeconds}s</p>
+                </div>
+              </div>
+            )}
           </div>
 
           <footer className="space-y-4 text-center">
