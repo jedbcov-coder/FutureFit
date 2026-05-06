@@ -6,18 +6,26 @@ import { laneToPercent, clamp } from './game/math.js'
 import { createRng, createRunSeed, seedFromSearch } from './game/random.js'
 import { collectPowerUp, findLaneContact, frameDelta, updatePhysics } from './game/updatePhysics.js'
 
-export function createInitialBody() {
+export function createInitialPhysics() {
   return {
     laneIndex: 1,
     playerPosition: { lane: LANES[1], y: PLAYER_Y },
-    health: 3,
-    lives: 3,
-    score: 0,
-    crates: 0,
+    speed: START_SPEED,
     shield: 0,
     pickups: [],
     colliders: [],
     timers: { lastTime: 0, spawnTimer: 0, peanutTimer: 0 },
+  }
+}
+
+export function createInitialMilestones() {
+  return {
+    score: 0,
+    cratesBroken: 0,
+    lives: 3,
+    health: 3,
+    elapsedSeconds: 0,
+    finalStats: null,
   }
 }
 
@@ -57,20 +65,26 @@ function useJungleStars(canvasRef, audioRef, seed) {
   }, [audioRef, canvasRef, seed])
 }
 
+function setChanged(setter, nextValue) {
+  setter((current) => (Object.is(current, nextValue) ? current : nextValue))
+}
+
 function App() {
-  const bodyRef = useRef(createInitialBody())
-  const [laneIndex, setLaneIndex] = useState(bodyRef.current.laneIndex)
-  const [obstacles, setObstacles] = useState(bodyRef.current.colliders)
-  const [powerUps, setPowerUps] = useState(bodyRef.current.pickups)
-  const [score, setScore] = useState(bodyRef.current.score)
-  const [finalStats, setFinalStats] = useState(null)
+  const physicsRef = useRef(createInitialPhysics())
+  const initialMilestones = useMemo(() => createInitialMilestones(), [])
+  const [laneIndex, setLaneIndex] = useState(physicsRef.current.laneIndex)
+  const [obstacles, setObstacles] = useState(physicsRef.current.colliders)
+  const [powerUps, setPowerUps] = useState(physicsRef.current.pickups)
+  const [score, setScore] = useState(initialMilestones.score)
+  const [cratesBroken, setCratesBroken] = useState(initialMilestones.cratesBroken)
+  const [lives, setLives] = useState(initialMilestones.lives)
+  const [health, setHealth] = useState(initialMilestones.health)
+  const [elapsedSeconds, setElapsedSeconds] = useState(initialMilestones.elapsedSeconds)
+  const [finalStats, setFinalStats] = useState(initialMilestones.finalStats)
   const [complete, setComplete] = useState(false)
   const [bestScore, setBestScore] = useState(() => Number(localStorage.getItem(BEST_SCORE_KEY) || 0))
   const [status, setStatus] = useState('ready')
-  const [shield, setShield] = useState(bodyRef.current.shield)
-  const [health, setHealth] = useState(bodyRef.current.health)
-  const [lives, setLives] = useState(bodyRef.current.lives)
-  const [crates, setCrates] = useState(bodyRef.current.crates)
+  const [shieldActive, setShieldActive] = useState(physicsRef.current.shield > 0)
   const [started, setStarted] = useState(false)
   const [gameOver, setGameOver] = useState(false)
   const [debug, setDebug] = useState(false)
@@ -83,54 +97,61 @@ function App() {
   const completeRef = useRef(false)
   const gameOverRef = useRef(false)
   const gameStartTimeRef = useRef(0)
-  const activeHudStatsRef = useRef({ fruit: bodyRef.current.score, crates: bodyRef.current.crates })
-  const gameState = useRef(bodyRef.current.timers)
+  const scoreRef = useRef(initialMilestones.score)
+  const cratesBrokenRef = useRef(initialMilestones.cratesBroken)
+  const elapsedSecondsRef = useRef(initialMilestones.elapsedSeconds)
+  const shieldActiveRef = useRef(physicsRef.current.shield > 0)
   const rngRef = useRef(createRng(runSeed))
   const requestedSeed = useMemo(() => seedFromSearch(globalThis.location?.search ?? ''), [])
 
   useJungleStars(canvasRef, audioRef, runSeed)
 
-  const speed = useMemo(() => START_SPEED + Math.min(score / 900, 3.8), [score])
   const playerLane = LANES[laneIndex]
 
-  const completeRun = useCallback(({ fruit, crates }) => {
-    const elapsedSeconds = gameStartTimeRef.current ? Math.max(0, Math.round((performance.now() - gameStartTimeRef.current) / 1000)) : 0
+  const completeRun = useCallback(({ fruit, cratesBroken }) => {
+    const nextElapsedSeconds = gameStartTimeRef.current ? Math.max(0, Math.round((performance.now() - gameStartTimeRef.current) / 1000)) : 0
     completeRef.current = true
-    setFinalStats({ fruit, crates, elapsedSeconds, seed: runSeed })
+    elapsedSecondsRef.current = nextElapsedSeconds
+    setChanged(setElapsedSeconds, nextElapsedSeconds)
+    setFinalStats({ fruit, cratesBroken, elapsedSeconds: nextElapsedSeconds, seed: runSeed })
     setComplete(true)
   }, [runSeed])
 
   const resetGame = useCallback(() => {
     const nextSeed = requestedSeed ?? createRunSeed()
 
-    const nextBody = createInitialBody()
-    nextBody.pickups = restoreEntityFlags(nextBody.pickups)
-    nextBody.colliders = restoreEntityFlags(nextBody.colliders)
+    const nextPhysics = createInitialPhysics()
+    const nextMilestones = createInitialMilestones()
+    nextPhysics.pickups = restoreEntityFlags(nextPhysics.pickups)
+    nextPhysics.colliders = restoreEntityFlags(nextPhysics.colliders)
 
-    bodyRef.current = nextBody
+    physicsRef.current = nextPhysics
     startedRef.current = true
     completeRef.current = false
     gameOverRef.current = false
     gameStartTimeRef.current = performance.now()
-    gameState.current = { ...nextBody.timers }
     rngRef.current = createRng(nextSeed)
-    activeHudStatsRef.current = { fruit: nextBody.score, crates: nextBody.crates }
     nextId.current = 1
 
     setRunSeed(nextSeed)
-    setLaneIndex(nextBody.laneIndex)
-    setObstacles(nextBody.colliders)
-    setPowerUps(nextBody.pickups)
-    setScore(nextBody.score)
-    setCrates(nextBody.crates)
-    setFinalStats(null)
+    setLaneIndex(nextPhysics.laneIndex)
+    setObstacles(nextPhysics.colliders)
+    setPowerUps(nextPhysics.pickups)
+    setScore(nextMilestones.score)
+    setCratesBroken(nextMilestones.cratesBroken)
+    setElapsedSeconds(nextMilestones.elapsedSeconds)
+    setFinalStats(nextMilestones.finalStats)
     setComplete(false)
     setGameOver(false)
     setStarted(true)
     setDebug(false)
-    setShield(nextBody.shield)
-    setHealth(nextBody.health)
-    setLives(nextBody.lives)
+    scoreRef.current = nextMilestones.score
+    cratesBrokenRef.current = nextMilestones.cratesBroken
+    elapsedSecondsRef.current = nextMilestones.elapsedSeconds
+    shieldActiveRef.current = nextPhysics.shield > 0
+    setShieldActive(nextPhysics.shield > 0)
+    setHealth(nextMilestones.health)
+    setLives(nextMilestones.lives)
     setStatus('playing')
     setMessage(`Use ←/A and →/D to steer, W to charge, and S to slide. Seed ${nextSeed}`)
     console.debug('FutureFit run seed', nextSeed)
@@ -192,50 +213,55 @@ function App() {
 
     let frameId = 0
     const tick = (time) => {
-      const state = gameState.current
-      const delta = frameDelta(time, state.lastTime)
-      state.lastTime = time
+      const physics = physicsRef.current
+      const delta = frameDelta(time, physics.timers.lastTime)
+      physics.timers.lastTime = time
+      physics.speed = START_SPEED + Math.min(scoreRef.current / 900, 3.8)
+      physics.laneIndex = laneIndex
+      physics.playerPosition = { lane: playerLane, y: PLAYER_Y }
 
+      const currentScore = scoreRef.current
       const nextFrame = updatePhysics({
-        obstacles,
-        powerUps,
-        score,
-        shield,
-        speed,
-        timers: state,
+        obstacles: physics.colliders,
+        powerUps: physics.pickups,
+        score: currentScore,
+        shield: physics.shield,
+        speed: physics.speed,
+        timers: physics.timers,
         delta,
         nextId: nextId.current,
         random: rngRef.current,
       })
 
-      state.spawnTimer = nextFrame.timers.spawnTimer
-      state.peanutTimer = nextFrame.timers.peanutTimer
+      physics.timers = { lastTime: time, ...nextFrame.timers }
+      const nextShieldActive = nextFrame.shield > 0
+      const nextElapsedSeconds = gameStartTimeRef.current ? Math.max(0, Math.round((time - gameStartTimeRef.current) / 1000)) : elapsedSecondsRef.current
+      physics.shield = nextFrame.shield
+      physics.pickups = restoreEntityFlags(nextFrame.powerUps)
+      physics.colliders = restoreEntityFlags(nextFrame.obstacles)
+      scoreRef.current = nextFrame.score
       nextId.current = nextFrame.nextId
-      const nextCrates = nextFrame.obstacles.length
-      bodyRef.current = {
-        ...bodyRef.current,
-        laneIndex,
-        playerPosition: { lane: playerLane, y: PLAYER_Y },
-        score: nextFrame.score,
-        crates: nextCrates,
-        shield: nextFrame.shield,
-        pickups: restoreEntityFlags(nextFrame.powerUps),
-        colliders: restoreEntityFlags(nextFrame.obstacles),
-        timers: { ...nextFrame.timers },
+
+      setObstacles(physics.colliders)
+      setPowerUps(physics.pickups)
+      if (nextFrame.score !== currentScore) {
+        setScore(nextFrame.score)
       }
-      activeHudStatsRef.current = { fruit: nextFrame.score, crates: nextCrates }
-      setObstacles(bodyRef.current.colliders)
-      setPowerUps(bodyRef.current.pickups)
-      setScore(nextFrame.score)
-      setCrates(nextCrates)
-      setShield(nextFrame.shield)
+      if (nextElapsedSeconds !== elapsedSecondsRef.current) {
+        elapsedSecondsRef.current = nextElapsedSeconds
+        setElapsedSeconds(nextElapsedSeconds)
+      }
+      if (nextShieldActive !== shieldActiveRef.current) {
+        shieldActiveRef.current = nextShieldActive
+        setShieldActive(nextShieldActive)
+      }
 
       frameId = requestAnimationFrame(tick)
     }
 
     frameId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frameId)
-  }, [laneIndex, obstacles, playerLane, powerUps, score, shield, speed, status])
+  }, [laneIndex, playerLane, status])
 
   useEffect(() => {
     if (status !== 'playing') return
@@ -243,35 +269,37 @@ function App() {
     const hit = findLaneContact(obstacles, playerLane)
     if (!hit) return
 
-    if (shield > 0) {
-      setObstacles((current) => {
-        const nextColliders = restoreEntityFlags(current.filter((obstacle) => obstacle.id !== hit.id))
-        bodyRef.current = { ...bodyRef.current, colliders: nextColliders, crates: nextColliders.length, shield: 0 }
-        activeHudStatsRef.current = { ...activeHudStatsRef.current, crates: nextColliders.length }
-        setCrates(nextColliders.length)
-        return nextColliders
-      })
-      setShield(0)
+    const physics = physicsRef.current
+    if (physics.shield > 0) {
+      const nextColliders = restoreEntityFlags(physics.colliders.filter((obstacle) => obstacle.id !== hit.id))
+      const nextCratesBroken = cratesBrokenRef.current + 1
+      physics.colliders = nextColliders
+      physics.shield = 0
+      cratesBrokenRef.current = nextCratesBroken
+      setObstacles(nextColliders)
+      setChanged(setCratesBroken, nextCratesBroken)
+      shieldActiveRef.current = false
+      setChanged(setShieldActive, false)
       setMessage('Peanut shield smashed through danger!')
       return
     }
 
-    const body = activeHudStatsRef.current
+    const finalScore = scoreRef.current
+    const finalCratesBroken = cratesBrokenRef.current
     gameOverRef.current = true
-    bodyRef.current = { ...bodyRef.current, health: 0, lives: 0 }
-    setHealth(0)
-    setLives(0)
+    setChanged(setHealth, 0)
+    setChanged(setLives, 0)
     setGameOver(true)
     setStarted(false)
-    completeRun({ fruit: body.fruit, crates: body.crates })
+    completeRun({ fruit: finalScore, cratesBroken: finalCratesBroken })
     setStatus('ended')
     setBestScore((current) => {
-      const nextBest = Math.max(current, body.fruit)
+      const nextBest = Math.max(current, finalScore)
       localStorage.setItem(BEST_SCORE_KEY, String(nextBest))
       return nextBest
     })
     setMessage('Oof! The jungle got tangled. Press Enter to try again.')
-  }, [completeRun, obstacles, playerLane, shield, status])
+  }, [completeRun, obstacles, playerLane, status])
 
   useEffect(() => {
     if (status !== 'playing') return
@@ -279,20 +307,19 @@ function App() {
     const pickup = findLaneContact(powerUps, playerLane)
     if (!pickup) return
 
-    const collected = collectPowerUp(powerUps, pickup, score)
+    const physics = physicsRef.current
+    const collected = collectPowerUp(physics.pickups, pickup, scoreRef.current)
     const nextPickups = restoreEntityFlags(collected.powerUps)
-    bodyRef.current = {
-      ...bodyRef.current,
-      pickups: nextPickups,
-      score: collected.score,
-      shield: collected.shield,
-    }
-    activeHudStatsRef.current = { ...activeHudStatsRef.current, fruit: collected.score }
+    physics.pickups = nextPickups
+    physics.shield = collected.shield
+    scoreRef.current = collected.score
+    shieldActiveRef.current = true
     setPowerUps(nextPickups)
-    setShield(collected.shield)
-    setScore(collected.score)
+    setChanged(setShieldActive, true)
+    setChanged(setScore, collected.score)
     setMessage('Crunch! Peanut shield active for five seconds.')
-  }, [playerLane, powerUps, score, status])
+  }, [playerLane, powerUps, status])
+
 
   return (
     <main className="h-screen bg-[#132516] text-white overflow-hidden flex items-center justify-center p-4" data-started={started} data-debug={debug}>
@@ -309,6 +336,7 @@ function App() {
               <p className="text-xs text-lime-100">Score</p>
               <p className="text-2xl font-black">{score}</p>
               <p className="text-xs text-pink-100">Best {bestScore}</p>
+              <p className="text-xs text-lime-100/80">Time {elapsedSeconds}s</p>
             </div>
           </header>
 
@@ -335,9 +363,9 @@ function App() {
             ))}
 
             <div
-              className={`absolute player ${shield > 0 ? 'shielded' : ''}`}
+              className={`absolute player ${shieldActive ? 'shielded' : ''}`}
               style={{ left: `${laneToPercent(playerLane)}%`, top: `${PLAYER_Y}%` }}
-              aria-label={`Elephant health ${health}, lives ${lives}, crates ${crates}`}
+              aria-label={`Elephant health ${health}, lives ${lives}, crates broken ${cratesBroken}`}
             >
               <span className="shadow-bubble rounded-full">🐘</span>
             </div>
@@ -348,7 +376,7 @@ function App() {
                 <h2 className="text-3xl font-black leading-tight">Jungle dash stats</h2>
                 <div className="complete-stats rounded-2xl px-4 py-3">
                   <p className="text-sm text-lime-50">Fruit {finalStats.fruit}</p>
-                  <p className="text-sm text-lime-50">Crates {finalStats.crates}</p>
+                  <p className="text-sm text-lime-50">Crates broken {finalStats.cratesBroken}</p>
                   <p className="text-sm text-lime-50">Time {finalStats.elapsedSeconds}s</p>
                   <p className="text-sm text-lime-50">Seed {finalStats.seed}</p>
                 </div>
