@@ -4,7 +4,8 @@ import { disposeAudioContext } from './game/audio.js'
 import { createJungleStarsScene } from './game/createScene.js'
 import { laneToPercent, clamp } from './game/math.js'
 import { createRng, createRunSeed, seedFromSearch } from './game/random.js'
-import { collectPowerUp, findLaneContact, frameDelta, updatePhysics } from './game/updatePhysics.js'
+import { activeColliderBounds, collectPowerUp, createEntityCollider, findLaneContact, frameDelta, updatePhysics } from './game/updatePhysics.js'
+import { OBSTACLE_TYPES, POWER_UP_TYPES } from './game/level.js'
 
 export function createInitialPhysics() {
   return {
@@ -31,6 +32,41 @@ export function createInitialMilestones() {
 
 function restoreEntityFlags(entities) {
   return entities.map((entity) => ({ ...entity, active: true, visible: true }))
+}
+
+const ENTITY_TYPES = { ...OBSTACLE_TYPES, ...POWER_UP_TYPES }
+
+function entityEmoji(entity) {
+  return ENTITY_TYPES[entity.type]?.emoji ?? '🪵'
+}
+
+function entityClassName(entity) {
+  if (entity.type === 'peanut') return 'power-up'
+  return `obstacle ${entity.type === 'banana' ? 'banana' : entity.type}`
+}
+
+function entityStyle(entity) {
+  const collider = createEntityCollider(entity)
+  return {
+    left: `${laneToPercent(entity.lane)}%`,
+    top: `${entity.y}%`,
+    '--entity-rotation': `${collider.rotation}deg`,
+  }
+}
+
+function debugColliderStyle(collider) {
+  return {
+    left: `${collider.x}%`,
+    top: `${collider.y}%`,
+    width: `${collider.width}%`,
+    height: `${collider.height}%`,
+    transform: `translate(-50%, -50%) rotate(${collider.rotation}deg)`,
+  }
+}
+
+function debugColliderText(collider) {
+  const rotation = collider.rotation ? ` r${Math.round(collider.rotation)}°` : ''
+  return `${collider.type}:${Math.round(collider.left)},${Math.round(collider.top)} ${collider.width.toFixed(1)}×${collider.height.toFixed(1)}${rotation}`
 }
 
 const ALLOWED_KEY_CODES = new Set(['Enter', 'Space', 'ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'KeyG'])
@@ -107,6 +143,7 @@ function App() {
   useJungleStars(canvasRef, audioRef, runSeed)
 
   const playerLane = LANES[laneIndex]
+  const debugColliders = useMemo(() => activeColliderBounds([...obstacles, ...powerUps], playerLane), [obstacles, playerLane, powerUps])
 
   const completeRun = useCallback(({ fruit, cratesBroken }) => {
     const nextElapsedSeconds = gameStartTimeRef.current ? Math.max(0, Math.round((performance.now() - gameStartTimeRef.current) / 1000)) : 0
@@ -349,18 +386,34 @@ function App() {
             {obstacles.map((obstacle) => (
               <div
                 key={obstacle.id}
-                className={`absolute obstacle rounded-full ${obstacle.type === 'banana' ? 'banana' : 'log'}`}
-                style={{ left: `${laneToPercent(obstacle.lane)}%`, top: `${obstacle.y}%` }}
+                className={`absolute rounded-full ${entityClassName(obstacle)}`}
+                style={entityStyle(obstacle)}
               >
-                {obstacle.type === 'banana' ? '🍌' : '🪵'}
+                {entityEmoji(obstacle)}
               </div>
             ))}
 
             {powerUps.map((powerUp) => (
-              <div key={powerUp.id} className="absolute power-up rounded-full" style={{ left: `${laneToPercent(powerUp.lane)}%`, top: `${powerUp.y}%` }}>
-                🥜
+              <div key={powerUp.id} className="absolute rounded-full power-up" style={entityStyle(powerUp)}>
+                {entityEmoji(powerUp)}
               </div>
             ))}
+
+            {debug && (
+              <div className="debug-collider-layer" aria-hidden="true">
+                <div className="debug-collider debug-collider-player" style={debugColliderStyle(debugColliders.player)} />
+                {debugColliders.entities.map((collider) => (
+                  <div key={`${collider.id}-debug`} className="debug-collider" style={debugColliderStyle(collider)} />
+                ))}
+                <div className="debug-collider-text">
+                  <p>Colliders active: {debugColliders.entities.length + 1}</p>
+                  <p>{debugColliderText(debugColliders.player)}</p>
+                  {debugColliders.entities.slice(0, 6).map((collider) => (
+                    <p key={`${collider.id}-debug-text`}>{debugColliderText(collider)}</p>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div
               className={`absolute player ${shieldActive ? 'shielded' : ''}`}

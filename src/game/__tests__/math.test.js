@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { aabb, clamp, lerp, trackCenter, worldX } from '../math.js'
+import { aabb, centeredRect, clamp, lerp, obb, playerIntersectsCollider, trackCenter, worldX } from '../math.js'
 
 test('clamp keeps values inside inclusive bounds', () => {
   assert.equal(clamp(-2, 0, 3), 0)
@@ -29,4 +29,14 @@ test('worldX maps lane offsets to track positions', () => {
   assert.equal(worldX(-1, 400, [-1, 0, 1]), 100)
   assert.equal(worldX(0, 400, [-1, 0, 1]), 200)
   assert.equal(worldX(1, 400, [-1, 0, 1]), 300)
+})
+
+
+test('obb detects rotated rectangle overlap without using the full rotated aabb', () => {
+  const player = centeredRect({ x: 50, y: 78, width: 10, height: 10 })
+  const rotatedLog = centeredRect({ x: 50, y: 78, width: 18, height: 4, rotation: -14 })
+  const visualCornerOnly = centeredRect({ x: 62, y: 72, width: 4, height: 4 })
+
+  assert.equal(obb(player, rotatedLog), true)
+  assert.equal(playerIntersectsCollider(visualCornerOnly, rotatedLog), false)
 })
