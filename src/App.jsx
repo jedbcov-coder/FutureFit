@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BEST_SCORE_KEY, LANES, PLAYER_Y, START_SPEED } from './game/config.js'
-import { disposeAudioContext } from './game/audio.js'
+import { AUDIO_MUTED_KEY, BEST_SCORE_KEY, LANES, PLAYER_Y, START_SPEED } from './game/config.js'
+import { disposeAudioContext, sequenceMusic, setMasterVolume, startAudio } from './game/audio.js'
 import { createJungleStarsScene } from './game/createScene.js'
 import { laneToPercent, clamp } from './game/math.js'
 import { createRng, createRunSeed, seedFromSearch } from './game/random.js'
@@ -148,13 +148,15 @@ function App() {
   const [finalStats, setFinalStats] = useState(initialMilestones.finalStats)
   const [complete, setComplete] = useState(false)
   const [bestScore, setBestScore] = useState(() => Number(localStorage.getItem(BEST_SCORE_KEY) || 0))
+  const [muted, setMuted] = useState(() => localStorage.getItem(AUDIO_MUTED_KEY) === 'true')
+  const [volume, setVolume] = useState(0.7)
   const [status, setStatus] = useState('ready')
   const [shieldActive, setShieldActive] = useState(physicsRef.current.shield > 0)
   const [started, setStarted] = useState(false)
   const [gameOver, setGameOver] = useState(false)
   const [debug, setDebug] = useState(false)
   const [runSeed, setRunSeed] = useState(() => createRunSeed())
-  const [message, setMessage] = useState('Tap Start, then dodge vines and grab peanuts!')
+  const [message, setMessage] = useState('Tap Begin, then dodge vines and grab peanuts!')
   const performanceMetrics = useDebugPerformanceMetrics()
   const canvasRef = useRef(null)
   const audioRef = useRef(null)
@@ -172,6 +174,27 @@ function App() {
 
   useJungleStars(canvasRef, audioRef, runSeed)
 
+  useEffect(() => {
+    localStorage.setItem(AUDIO_MUTED_KEY, String(muted))
+  }, [muted])
+
+  useEffect(() => {
+    setMasterVolume(audioRef.current, { muted, volume })
+  }, [muted, volume])
+
+  const beginAudio = useCallback(() => {
+    let audioContext = audioRef.current
+    if (!audioContext || audioContext.state === 'closed') {
+      audioContext = startAudio(undefined, { muted, volume })
+      audioRef.current = audioContext
+    } else {
+      setMasterVolume(audioContext, { muted, volume })
+      if (audioContext.state === 'suspended') audioContext.resume()
+    }
+
+    sequenceMusic(audioContext)
+  }, [muted, volume])
+
   const playerLane = LANES[laneIndex]
   const debugColliders = useMemo(() => activeColliderBounds([...obstacles, ...powerUps], playerLane), [obstacles, playerLane, powerUps])
 
@@ -184,7 +207,9 @@ function App() {
     setComplete(true)
   }, [runSeed])
 
-  const resetGame = useCallback(() => {
+  const resetGame = useCallback(({ startSound = false } = {}) => {
+    if (startSound) beginAudio()
+
     const nextSeed = requestedSeed ?? createRunSeed()
 
     const nextPhysics = createInitialPhysics()
@@ -222,7 +247,7 @@ function App() {
     setStatus('playing')
     setMessage(`Use ←/A and →/D to steer, W to charge, and S to slide. Seed ${nextSeed}`)
     console.debug('FutureFit run seed', nextSeed)
-  }, [requestedSeed])
+  }, [beginAudio, requestedSeed])
 
   useEffect(() => {
     const keyDown = (e) => {
@@ -474,12 +499,29 @@ function App() {
               <button className="control rounded-full" onClick={() => setLaneIndex((current) => clamp(current - 1, 0, LANES.length - 1))} disabled={status !== 'playing'}>
                 ←
               </button>
-              <button className="start-button rounded-full px-7 py-3 font-black" onClick={resetGame}>
-                {status === 'playing' ? 'Restart' : gameOver ? 'Try Again' : 'Start dash'}
+              <button className="start-button rounded-full px-7 py-3 font-black" onClick={() => resetGame({ startSound: true })}>
+                {status === 'playing' ? 'Restart' : gameOver ? 'Try Again' : 'Begin dash'}
               </button>
               <button className="control rounded-full" onClick={() => setLaneIndex((current) => clamp(current + 1, 0, LANES.length - 1))} disabled={status !== 'playing'}>
                 →
               </button>
+            </div>
+            <div className="audio-controls rounded-2xl px-4 py-3" aria-label="Audio controls">
+              <button className="audio-toggle rounded-full px-4 py-3 font-black" type="button" onClick={() => setMuted((current) => !current)} aria-pressed={muted}>
+                {muted ? 'Unmute' : 'Mute'}
+              </button>
+              <label className="audio-volume text-xs text-lime-100">
+                Volume
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={volume}
+                  onChange={(event) => setVolume(Number(event.target.value))}
+                  aria-label="Audio volume"
+                />
+              </label>
             </div>
             <p className="text-xs text-lime-100/80">Controls: ←/A and →/D steer • W charge • S slide • Enter/Space start • G debug.</p>
             <p className="text-[0.65rem] text-lime-100/60" data-debug-seed={runSeed}>Debug seed {runSeed}</p>

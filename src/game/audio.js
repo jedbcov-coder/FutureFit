@@ -10,10 +10,22 @@ export function noteToFrequency(note) {
   return 440 * 2 ** ((semitoneOffset + (octave - 4) * 12) / 12)
 }
 
-export function startAudio(AudioContextClass = window.AudioContext || window.webkitAudioContext) {
+export function startAudio(AudioContextClass = window.AudioContext || window.webkitAudioContext, { muted = false, volume = 0.7 } = {}) {
   const context = new AudioContextClass()
+  const masterGain = context.createGain()
+  context.masterGain = masterGain
+  setMasterVolume(context, { muted, volume })
+  masterGain.connect(context.destination)
   if (context.state === 'suspended') context.resume()
   return context
+}
+
+export function setMasterVolume(context, { muted = false, volume = 0.7 } = {}) {
+  const masterGain = context?.masterGain
+  if (!masterGain) return
+
+  const nextVolume = muted ? 0 : Math.min(Math.max(Number(volume), 0), 1)
+  masterGain.gain.setValueAtTime(nextVolume, context.currentTime)
 }
 
 export function disposeAudioContext(audioRef) {
@@ -43,7 +55,7 @@ export function playTone(context, frequency, duration = 0.14, when = context.cur
   gain.gain.exponentialRampToValueAtTime(0.0001, when + duration)
 
   oscillator.connect(gain)
-  gain.connect(context.destination)
+  gain.connect(context.masterGain ?? context.destination)
   oscillator.start(when)
   oscillator.stop(when + duration + 0.02)
 
