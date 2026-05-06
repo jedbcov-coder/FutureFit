@@ -1,95 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import * as THREE from 'three'
-
-const LANES = [-1, 0, 1]
-const START_SPEED = 3.8
-const PLAYER_Y = 78
-const GAME_WIDTH = 390
-const OBSTACLE_INTERVAL = 1.05
-const POWER_UP_INTERVAL = 4.8
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max)
-}
-
-function makeObstacle(id, speed, type = 'log') {
-  return {
-    id,
-    lane: LANES[Math.floor(Math.random() * LANES.length)],
-    y: -14,
-    size: type === 'banana' ? 8 : 12,
-    speed,
-    type,
-  }
-}
-
-function makePowerUp(id, speed) {
-  return {
-    id,
-    lane: LANES[Math.floor(Math.random() * LANES.length)],
-    y: -18,
-    size: 10,
-    speed: speed * 0.9,
-    type: 'peanut',
-  }
-}
+import { BEST_SCORE_KEY, LANES, PLAYER_Y, START_SPEED } from './game/config.js'
+import { createJungleStarsScene } from './game/createScene.js'
+import { laneToPercent, clamp } from './game/math.js'
+import { collectPowerUp, findLaneContact, frameDelta, updatePhysics } from './game/updatePhysics.js'
 
 function useJungleStars(canvasRef) {
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return undefined
 
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
-    const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
-    camera.position.z = 8
-
-    const group = new THREE.Group()
-    const geometry = new THREE.SphereGeometry(0.035, 8, 8)
-    const materials = [
-      new THREE.MeshBasicMaterial({ color: 0x7ade83 }),
-      new THREE.MeshBasicMaterial({ color: 0xffd166 }),
-      new THREE.MeshBasicMaterial({ color: 0xff8cc6 }),
-    ]
-
-    for (let index = 0; index < 95; index += 1) {
-      const star = new THREE.Mesh(geometry, materials[index % materials.length])
-      star.position.set((Math.random() - 0.5) * 11, (Math.random() - 0.5) * 15, -Math.random() * 9)
-      star.userData.floatSpeed = 0.004 + Math.random() * 0.008
-      group.add(star)
-    }
-
-    scene.add(group)
-
+    const jungleScene = createJungleStarsScene(canvas)
     let frameId = 0
-    const resize = () => {
-      const { clientWidth, clientHeight } = canvas
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-      renderer.setSize(clientWidth, clientHeight, false)
-      camera.aspect = clientWidth / Math.max(clientHeight, 1)
-      camera.updateProjectionMatrix()
-    }
 
     const animate = () => {
-      group.rotation.z += 0.0009
-      group.children.forEach((star) => {
-        star.position.y -= star.userData.floatSpeed
-        if (star.position.y < -7.5) star.position.y = 7.5
-      })
-      renderer.render(scene, camera)
+      jungleScene.renderFrame()
       frameId = requestAnimationFrame(animate)
     }
 
-    resize()
-    window.addEventListener('resize', resize)
+    jungleScene.resize()
+    window.addEventListener('resize', jungleScene.resize)
     animate()
 
     return () => {
       cancelAnimationFrame(frameId)
-      window.removeEventListener('resize', resize)
-      geometry.dispose()
-      materials.forEach((material) => material.dispose())
-      renderer.dispose()
+      window.removeEventListener('resize', jungleScene.resize)
+      jungleScene.dispose()
     }
   }, [canvasRef])
 }
@@ -99,7 +34,7 @@ function App() {
   const [obstacles, setObstacles] = useState([])
   const [powerUps, setPowerUps] = useState([])
   const [score, setScore] = useState(0)
-  const [bestScore, setBestScore] = useState(() => Number(localStorage.getItem('jungleDashBest') || 0))
+  const [bestScore, setBestScore] = useState(() => Number(localStorage.getItem(BEST_SCORE_KEY) || 0))
   const [status, setStatus] = useState('ready')
   const [shield, setShield] = useState(0)
   const [message, setMessage] = useState('Tap Start, then dodge vines and grab peanuts!')
@@ -151,38 +86,39 @@ function App() {
     let frameId = 0
     const tick = (time) => {
       const state = gameState.current
-      const delta = state.lastTime ? Math.min((time - state.lastTime) / 1000, 0.033) : 0
+      const delta = frameDelta(time, state.lastTime)
       state.lastTime = time
-      state.spawnTimer += delta
-      state.peanutTimer += delta
 
-      setScore((current) => current + Math.round(delta * 75))
-      setShield((current) => Math.max(0, current - delta))
+      const nextFrame = updatePhysics({
+        obstacles,
+        powerUps,
+        score,
+        shield,
+        speed,
+        timers: state,
+        delta,
+        nextId: nextId.current,
+      })
 
-      if (state.spawnTimer > Math.max(0.58, OBSTACLE_INTERVAL - score / 4000)) {
-        state.spawnTimer = 0
-        setObstacles((current) => [...current, makeObstacle(nextId.current += 1, speed, Math.random() > 0.7 ? 'banana' : 'log')])
-      }
-
-      if (state.peanutTimer > POWER_UP_INTERVAL) {
-        state.peanutTimer = 0
-        setPowerUps((current) => [...current, makePowerUp(nextId.current += 1, speed)])
-      }
-
-      setObstacles((current) => current.map((obstacle) => ({ ...obstacle, y: obstacle.y + obstacle.speed * delta * 22 })).filter((obstacle) => obstacle.y < 112))
-      setPowerUps((current) => current.map((powerUp) => ({ ...powerUp, y: powerUp.y + powerUp.speed * delta * 22 })).filter((powerUp) => powerUp.y < 112))
+      state.spawnTimer = nextFrame.timers.spawnTimer
+      state.peanutTimer = nextFrame.timers.peanutTimer
+      nextId.current = nextFrame.nextId
+      setObstacles(nextFrame.obstacles)
+      setPowerUps(nextFrame.powerUps)
+      setScore(nextFrame.score)
+      setShield(nextFrame.shield)
 
       frameId = requestAnimationFrame(tick)
     }
 
     frameId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frameId)
-  }, [score, speed, status])
+  }, [obstacles, powerUps, score, shield, speed, status])
 
   useEffect(() => {
     if (status !== 'playing') return
 
-    const hit = obstacles.find((obstacle) => obstacle.lane === playerLane && Math.abs(obstacle.y - PLAYER_Y) < obstacle.size)
+    const hit = findLaneContact(obstacles, playerLane)
     if (!hit) return
 
     if (shield > 0) {
@@ -195,7 +131,7 @@ function App() {
     setStatus('ended')
     setBestScore((current) => {
       const nextBest = Math.max(current, score)
-      localStorage.setItem('jungleDashBest', String(nextBest))
+      localStorage.setItem(BEST_SCORE_KEY, String(nextBest))
       return nextBest
     })
     setMessage('Oof! The jungle got tangled. Press Enter to try again.')
@@ -204,14 +140,15 @@ function App() {
   useEffect(() => {
     if (status !== 'playing') return
 
-    const pickup = powerUps.find((powerUp) => powerUp.lane === playerLane && Math.abs(powerUp.y - PLAYER_Y) < powerUp.size)
+    const pickup = findLaneContact(powerUps, playerLane)
     if (!pickup) return
 
-    setPowerUps((current) => current.filter((powerUp) => powerUp.id !== pickup.id))
-    setShield(5)
-    setScore((current) => current + 150)
+    const collected = collectPowerUp(powerUps, pickup, score)
+    setPowerUps(collected.powerUps)
+    setShield(collected.shield)
+    setScore(collected.score)
     setMessage('Crunch! Peanut shield active for five seconds.')
-  }, [playerLane, powerUps, status])
+  }, [playerLane, powerUps, score, status])
 
   return (
     <main className="h-screen bg-[#132516] text-white overflow-hidden flex items-center justify-center p-4">
@@ -241,19 +178,19 @@ function App() {
               <div
                 key={obstacle.id}
                 className={`absolute obstacle rounded-full ${obstacle.type === 'banana' ? 'banana' : 'log'}`}
-                style={{ left: `${50 + obstacle.lane * 27}%`, top: `${obstacle.y}%` }}
+                style={{ left: `${laneToPercent(obstacle.lane)}%`, top: `${obstacle.y}%` }}
               >
                 {obstacle.type === 'banana' ? '🍌' : '🪵'}
               </div>
             ))}
 
             {powerUps.map((powerUp) => (
-              <div key={powerUp.id} className="absolute power-up rounded-full" style={{ left: `${50 + powerUp.lane * 27}%`, top: `${powerUp.y}%` }}>
+              <div key={powerUp.id} className="absolute power-up rounded-full" style={{ left: `${laneToPercent(powerUp.lane)}%`, top: `${powerUp.y}%` }}>
                 🥜
               </div>
             ))}
 
-            <div className={`absolute player ${shield > 0 ? 'shielded' : ''}`} style={{ left: `${50 + playerLane * 27}%`, top: `${PLAYER_Y}%` }}>
+            <div className={`absolute player ${shield > 0 ? 'shielded' : ''}`} style={{ left: `${laneToPercent(playerLane)}%`, top: `${PLAYER_Y}%` }}>
               <span className="shadow-bubble rounded-full">🐘</span>
             </div>
           </div>

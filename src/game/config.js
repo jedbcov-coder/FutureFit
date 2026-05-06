@@ -1,0 +1,14 @@
+export const LANES = [-1, 0, 1]
+export const START_SPEED = 3.8
+export const PLAYER_Y = 78
+export const GAME_WIDTH = 390
+export const OBSTACLE_INTERVAL = 1.05
+export const POWER_UP_INTERVAL = 4.8
+export const LANE_SPACING_PERCENT = 27
+export const TRACK_CENTER_PERCENT = 50
+export const MAX_FRAME_DELTA = 0.033
+export const SCORE_RATE = 75
+export const ENTITY_SPEED_SCALE = 22
+export const POWER_UP_SCORE = 150
+export const SHIELD_DURATION = 5
+export const BEST_SCORE_KEY = 'jungleDashBest'
