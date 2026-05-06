@@ -1,4 +1,5 @@
 import { LANES, OBSTACLE_INTERVAL, POWER_UP_INTERVAL, START_SPEED } from './config.js'
+import { unseededRandom } from './random.js'
 
 export const LEVEL_START_Y = -14
 export const POWER_UP_START_Y = -18
@@ -49,7 +50,7 @@ export function buildLevel({ speed = START_SPEED, obstacleInterval = OBSTACLE_IN
   return addFruitLine(baseLevel, { y: LEVEL_START_Y, lanes: [LANES[0], LANES[2]], type: 'banana', spacing: 11 })
 }
 
-export function makeObstacle(id, speed, type = 'log', random = Math.random) {
+export function makeObstacle(id, speed, type = 'log', random = unseededRandom) {
   return {
     id,
     lane: LANES[Math.floor(random() * LANES.length)],
@@ -60,7 +61,7 @@ export function makeObstacle(id, speed, type = 'log', random = Math.random) {
   }
 }
 
-export function makePowerUp(id, speed, random = Math.random) {
+export function makePowerUp(id, speed, random = unseededRandom) {
   return {
     id,
     lane: LANES[Math.floor(random() * LANES.length)],

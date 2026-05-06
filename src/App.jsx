@@ -3,6 +3,7 @@ import { BEST_SCORE_KEY, LANES, PLAYER_Y, START_SPEED } from './game/config.js'
 import { disposeAudioContext } from './game/audio.js'
 import { createJungleStarsScene } from './game/createScene.js'
 import { laneToPercent, clamp } from './game/math.js'
+import { createRng, createRunSeed, seedFromSearch } from './game/random.js'
 import { collectPowerUp, findLaneContact, frameDelta, updatePhysics } from './game/updatePhysics.js'
 
 export function createInitialBody() {
@@ -24,12 +25,12 @@ function restoreEntityFlags(entities) {
   return entities.map((entity) => ({ ...entity, active: true, visible: true }))
 }
 
-function useJungleStars(canvasRef, audioRef) {
+function useJungleStars(canvasRef, audioRef, seed) {
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return undefined
 
-    const jungleScene = createJungleStarsScene(canvas)
+    const jungleScene = createJungleStarsScene(canvas, { seed: `${seed}:stars` })
     let frameId = 0
 
     const animate = () => {
@@ -47,7 +48,7 @@ function useJungleStars(canvasRef, audioRef) {
       jungleScene.dispose()
       disposeAudioContext(audioRef)
     }
-  }, [audioRef, canvasRef])
+  }, [audioRef, canvasRef, seed])
 }
 
 function App() {
@@ -67,6 +68,7 @@ function App() {
   const [started, setStarted] = useState(false)
   const [gameOver, setGameOver] = useState(false)
   const [debug, setDebug] = useState(false)
+  const [runSeed, setRunSeed] = useState(() => createRunSeed())
   const [message, setMessage] = useState('Tap Start, then dodge vines and grab peanuts!')
   const canvasRef = useRef(null)
   const audioRef = useRef(null)
@@ -77,8 +79,10 @@ function App() {
   const gameStartTimeRef = useRef(0)
   const activeHudStatsRef = useRef({ fruit: bodyRef.current.score, crates: bodyRef.current.crates })
   const gameState = useRef(bodyRef.current.timers)
+  const rngRef = useRef(createRng(runSeed))
+  const requestedSeed = useMemo(() => seedFromSearch(globalThis.location?.search ?? ''), [])
 
-  useJungleStars(canvasRef, audioRef)
+  useJungleStars(canvasRef, audioRef, runSeed)
 
   const speed = useMemo(() => START_SPEED + Math.min(score / 900, 3.8), [score])
   const playerLane = LANES[laneIndex]
@@ -86,11 +90,13 @@ function App() {
   const completeRun = useCallback(({ fruit, crates }) => {
     const elapsedSeconds = gameStartTimeRef.current ? Math.max(0, Math.round((performance.now() - gameStartTimeRef.current) / 1000)) : 0
     completeRef.current = true
-    setFinalStats({ fruit, crates, elapsedSeconds })
+    setFinalStats({ fruit, crates, elapsedSeconds, seed: runSeed })
     setComplete(true)
-  }, [])
+  }, [runSeed])
 
   const resetGame = useCallback(() => {
+    const nextSeed = requestedSeed ?? createRunSeed()
+
     const nextBody = createInitialBody()
     nextBody.pickups = restoreEntityFlags(nextBody.pickups)
     nextBody.colliders = restoreEntityFlags(nextBody.colliders)
@@ -101,9 +107,11 @@ function App() {
     gameOverRef.current = false
     gameStartTimeRef.current = performance.now()
     gameState.current = { ...nextBody.timers }
+    rngRef.current = createRng(nextSeed)
     activeHudStatsRef.current = { fruit: nextBody.score, crates: nextBody.crates }
     nextId.current = 1
 
+    setRunSeed(nextSeed)
     setLaneIndex(nextBody.laneIndex)
     setObstacles(nextBody.colliders)
     setPowerUps(nextBody.pickups)
@@ -118,8 +126,9 @@ function App() {
     setHealth(nextBody.health)
     setLives(nextBody.lives)
     setStatus('playing')
-    setMessage('Use ← → or A/D to dash through the jungle!')
-  }, [])
+    setMessage(`Use ← → or A/D to dash through the jungle! Seed ${nextSeed}`)
+    console.debug('FutureFit run seed', nextSeed)
+  }, [requestedSeed])
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -161,6 +170,7 @@ function App() {
         timers: state,
         delta,
         nextId: nextId.current,
+        random: rngRef.current,
       })
 
       state.spawnTimer = nextFrame.timers.spawnTimer
@@ -305,6 +315,7 @@ function App() {
                   <p className="text-sm text-lime-50">Fruit {finalStats.fruit}</p>
                   <p className="text-sm text-lime-50">Crates {finalStats.crates}</p>
                   <p className="text-sm text-lime-50">Time {finalStats.elapsedSeconds}s</p>
+                  <p className="text-sm text-lime-50">Seed {finalStats.seed}</p>
                 </div>
               </div>
             )}
@@ -324,6 +335,7 @@ function App() {
               </button>
             </div>
             <p className="text-xs text-lime-100/80">Dodge logs and bananas. Peanuts give one shield hit.</p>
+            <p className="text-[0.65rem] text-lime-100/60" data-debug-seed={runSeed}>Debug seed {runSeed}</p>
           </footer>
         </div>
       </section>

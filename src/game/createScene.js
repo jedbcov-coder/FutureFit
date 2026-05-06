@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { createRng } from './random.js'
 
 const DISPOSABLE_TEXTURE_SLOTS = Object.freeze(['map', 'alphaMap', 'emissiveMap', 'normalMap'])
 const GENERATED_TEXTURE_KEYS = Object.freeze(['canvasTexture', 'popTextTexture', 'pickupTexture'])
@@ -67,7 +68,7 @@ export function disposeSceneResources(scene) {
   }
 }
 
-export function createJungleStarsScene(canvas) {
+export function createJungleStarsScene(canvas, { seed = 'jungle-stars', rng = createRng(seed) } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
@@ -83,8 +84,8 @@ export function createJungleStarsScene(canvas) {
 
   for (let index = 0; index < 95; index += 1) {
     const star = new THREE.Mesh(geometry, materials[index % materials.length])
-    star.position.set((Math.random() - 0.5) * 11, (Math.random() - 0.5) * 15, -Math.random() * 9)
-    star.userData.floatSpeed = 0.004 + Math.random() * 0.008
+    star.position.set((rng() - 0.5) * 11, (rng() - 0.5) * 15, -rng() * 9)
+    star.userData.floatSpeed = 0.004 + rng() * 0.008
     group.add(star)
   }
 
