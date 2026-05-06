@@ -16,6 +16,22 @@ export function startAudio(AudioContextClass = window.AudioContext || window.web
   return context
 }
 
+export function disposeAudioContext(audioRef) {
+  const audioContext = audioRef.current
+  if (!audioContext) return
+
+  if (audioContext.state !== 'closed' && typeof audioContext.close === 'function') {
+    const closeResult = audioContext.close()
+    if (closeResult?.catch && typeof audioContext.suspend === 'function') {
+      closeResult.catch(() => audioContext.suspend())
+    }
+  } else if (audioContext.state !== 'closed' && typeof audioContext.suspend === 'function') {
+    audioContext.suspend()
+  }
+
+  audioRef.current = null
+}
+
 export function playTone(context, frequency, duration = 0.14, when = context.currentTime) {
   const oscillator = context.createOscillator()
   const gain = context.createGain()
