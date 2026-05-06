@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BEST_SCORE_KEY, LANES, PLAYER_Y, START_SPEED } from './game/config.js'
+import { disposeAudioContext } from './game/audio.js'
 import { createJungleStarsScene } from './game/createScene.js'
 import { laneToPercent, clamp } from './game/math.js'
 import { collectPowerUp, findLaneContact, frameDelta, updatePhysics } from './game/updatePhysics.js'
@@ -23,7 +24,7 @@ function restoreEntityFlags(entities) {
   return entities.map((entity) => ({ ...entity, active: true, visible: true }))
 }
 
-function useJungleStars(canvasRef) {
+function useJungleStars(canvasRef, audioRef) {
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return undefined
@@ -44,8 +45,9 @@ function useJungleStars(canvasRef) {
       cancelAnimationFrame(frameId)
       window.removeEventListener('resize', jungleScene.resize)
       jungleScene.dispose()
+      disposeAudioContext(audioRef)
     }
-  }, [])
+  }, [audioRef, canvasRef])
 }
 
 function App() {
@@ -67,6 +69,7 @@ function App() {
   const [debug, setDebug] = useState(false)
   const [message, setMessage] = useState('Tap Start, then dodge vines and grab peanuts!')
   const canvasRef = useRef(null)
+  const audioRef = useRef(null)
   const nextId = useRef(1)
   const startedRef = useRef(false)
   const completeRef = useRef(false)
@@ -75,7 +78,7 @@ function App() {
   const activeHudStatsRef = useRef({ fruit: bodyRef.current.score, crates: bodyRef.current.crates })
   const gameState = useRef(bodyRef.current.timers)
 
-  useJungleStars(canvasRef)
+  useJungleStars(canvasRef, audioRef)
 
   const speed = useMemo(() => START_SPEED + Math.min(score / 900, 3.8), [score])
   const playerLane = LANES[laneIndex]
