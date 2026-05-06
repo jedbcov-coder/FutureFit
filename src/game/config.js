@@ -12,3 +12,4 @@ export const ENTITY_SPEED_SCALE = 22
 export const POWER_UP_SCORE = 150
 export const SHIELD_DURATION = 5
 export const BEST_SCORE_KEY = 'jungleDashBest'
+export const AUDIO_MUTED_KEY = 'jungleDashMuted'

@@ -249,3 +249,35 @@ button {
   text-align: left;
   text-shadow: 0 1px 2px rgb(0 0 0 / 0.75);
 }
+
+.audio-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  width: min(100%, 390px);
+  margin: 0 auto;
+  background: rgb(5 20 9 / 0.48);
+  border: 1px solid rgb(217 249 157 / 0.18);
+  backdrop-filter: blur(10px);
+}
+
+.audio-toggle {
+  cursor: pointer;
+  background: rgb(236 252 203 / 0.9);
+  color: #132516;
+}
+
+.audio-volume {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.audio-volume input {
+  width: min(100%, 150px);
+  accent-color: #ff65b5;
+}
