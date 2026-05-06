@@ -1,5 +1,6 @@
 import { ENTITY_SPEED_SCALE, MAX_FRAME_DELTA, OBSTACLE_INTERVAL, PLAYER_Y, POWER_UP_INTERVAL, POWER_UP_SCORE, SCORE_RATE, SHIELD_DURATION } from './config.js'
 import { makeObstacle, makePowerUp } from './level.js'
+import { unseededRandom } from './random.js'
 
 export function frameDelta(time, lastTime) {
   return lastTime ? Math.min((time - lastTime) / 1000, MAX_FRAME_DELTA) : 0
@@ -19,7 +20,7 @@ export function nextObstacleInterval(score) {
   return Math.max(0.58, OBSTACLE_INTERVAL - score / 4000)
 }
 
-export function updatePhysics({ obstacles, powerUps, score, shield, speed, timers, delta, nextId, random = Math.random }) {
+export function updatePhysics({ obstacles, powerUps, score, shield, speed, timers, delta, nextId, random = unseededRandom }) {
   const nextTimers = {
     spawnTimer: timers.spawnTimer + delta,
     peanutTimer: timers.peanutTimer + delta,
