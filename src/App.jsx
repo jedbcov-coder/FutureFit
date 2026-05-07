@@ -34,6 +34,19 @@ function restoreEntityFlags(entities) {
   return entities.map((entity) => ({ ...entity, active: true, visible: true }))
 }
 
+// Conflict 1: keep codex touch-input helpers
+const createInitialInputState = () => ({
+  left: false,
+  right: false,
+  charge: false,
+  space: false,
+  jumpSlide: false,
+  smash: false,
+})
+
+const SPACE_HOLD_THRESHOLD_MS = 240
+
+// Conflict 2: keep main entity helpers
 const ENTITY_TYPES = { ...OBSTACLE_TYPES, ...POWER_UP_TYPES }
 
 function entityEmoji(entity) {
@@ -170,6 +183,9 @@ function App() {
   const elapsedSecondsRef = useRef(initialMilestones.elapsedSeconds)
   const shieldActiveRef = useRef(physicsRef.current.shield > 0)
   const rngRef = useRef(createRng(runSeed))
+  const keyRef = useRef(createInitialInputState())
+  const touchPointersRef = useRef(new Map())
+  const jumpSlideHoldTimerRef = useRef(0)
   const requestedSeed = useMemo(() => seedFromSearch(globalThis.location?.search ?? ''), [])
 
   useJungleStars(canvasRef, audioRef, runSeed)
@@ -224,6 +240,9 @@ function App() {
     gameStartTimeRef.current = performance.now()
     rngRef.current = createRng(nextSeed)
     nextId.current = 1
+    keyRef.current = createInitialInputState()
+    touchPointersRef.current.clear()
+    window.clearTimeout(jumpSlideHoldTimerRef.current)
 
     setRunSeed(nextSeed)
     setLaneIndex(nextPhysics.laneIndex)
@@ -245,60 +264,150 @@ function App() {
     setHealth(nextMilestones.health)
     setLives(nextMilestones.lives)
     setStatus('playing')
-    setMessage(`Use ←/A and →/D to steer, W to charge, and S to slide. Seed ${nextSeed}`)
+    // Conflict 3: codex message (touch controls context)
+    setMessage(`Use ← →, A/D, or the touch controls to dash through the jungle! Seed ${nextSeed}`)
     console.debug('FutureFit run seed', nextSeed)
   }, [beginAudio, requestedSeed])
 
-  useEffect(() => {
-    const keyDown = (e) => {
-      if (!isAllowedKey(e.code)) return
-      e.preventDefault()
+  const moveLane = useCallback((direction) => {
+    setLaneIndex((current) => clamp(current + direction, 0, LANES.length - 1))
+  }, [])
 
-      if (e.code === 'Enter' || e.code === 'Space') {
-        if (status !== 'playing') resetGame()
-        return
+  const setInputState = useCallback((input, active) => {
+    keyRef.current[input] = active
+
+    if (input === 'jumpSlide') {
+      keyRef.current.space = active
+    }
+  }, [])
+
+  const pulseInput = useCallback((input) => {
+    setInputState(input, true)
+    window.setTimeout(() => setInputState(input, false), 140)
+  }, [setInputState])
+
+  const startJumpSlideInput = useCallback(() => {
+    setInputState('jumpSlide', true)
+    window.clearTimeout(jumpSlideHoldTimerRef.current)
+    jumpSlideHoldTimerRef.current = window.setTimeout(() => {
+      if (keyRef.current.jumpSlide) {
+        setMessage('Holding jump/slide: elephant keeps low and ready, just like holding Space.')
       }
+    }, SPACE_HOLD_THRESHOLD_MS)
+  }, [setInputState])
 
-      if (e.code === 'KeyG') {
+  const endJumpSlideInput = useCallback(() => {
+    const wasHolding = keyRef.current.jumpSlide
+    setInputState('jumpSlide', false)
+    window.clearTimeout(jumpSlideHoldTimerRef.current)
+
+    if (wasHolding && status === 'playing') {
+      setMessage('Jump/slide tapped: Space action released.')
+    }
+  }, [setInputState, status])
+
+  const clearPointerInput = useCallback((pointerId) => {
+    const input = touchPointersRef.current.get(pointerId)
+    if (!input) return
+
+    touchPointersRef.current.delete(pointerId)
+
+    if (input === 'jumpSlide') {
+      endJumpSlideInput()
+      return
+    }
+
+    setInputState(input, false)
+  }, [endJumpSlideInput, setInputState])
+
+  const startTouchInput = useCallback((input, event) => {
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    touchPointersRef.current.set(event.pointerId, input)
+
+    if (input === 'jumpSlide') {
+      startJumpSlideInput()
+      return
+    }
+
+    setInputState(input, true)
+
+    if (status !== 'playing') return
+
+    if (input === 'left') moveLane(-1)
+    if (input === 'right') moveLane(1)
+    if (input === 'charge') setMessage('Charge primed! Keep holding while you line up the lane.')
+    if (input === 'smash') setMessage('Smash tapped! Peanut shields still auto-smash obstacles.')
+  }, [moveLane, setInputState, startJumpSlideInput, status])
+
+  const endTouchInput = useCallback((event) => {
+    event.preventDefault()
+    clearPointerInput(event.pointerId)
+  }, [clearPointerInput])
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(jumpSlideHoldTimerRef.current)
+    }
+  }, [])
+
+  // Conflict 4: merged keyDown — codex event.key logic + main KeyG debug toggle + isAllowedKey guard
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (!isAllowedKey(event.code)) return
+      event.preventDefault()
+
+      const normalizedKey = event.key.toLowerCase()
+
+      if (event.code === 'KeyG') {
         setDebug((current) => !current)
         return
       }
 
-      if (status !== 'playing') return
+      if (event.key === 'Enter' || event.key === ' ') {
+        if (status !== 'playing') resetGame()
+      }
 
-      if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
-        setLaneIndex((current) => clamp(current - 1, 0, LANES.length - 1))
+      if (event.key === ' ') {
+        if (!keyRef.current.jumpSlide) startJumpSlideInput()
         return
       }
 
-      if (e.code === 'ArrowRight' || e.code === 'KeyD') {
-        setLaneIndex((current) => clamp(current + 1, 0, LANES.length - 1))
-        return
+      if (event.repeat || status !== 'playing') return
+
+      if (event.key === 'ArrowLeft' || normalizedKey === 'a') {
+        pulseInput('left')
+        moveLane(-1)
       }
 
-      if (e.code === 'KeyW') {
-        setMessage('Charge forward! Keep dodging jungle hazards.')
-        return
+      if (event.key === 'ArrowRight' || normalizedKey === 'd') {
+        pulseInput('right')
+        moveLane(1)
       }
 
-      if (e.code === 'KeyS') {
-        setMessage('Slide low! Watch for the next opening.')
-      }
+      if (normalizedKey === 'shift') setInputState('charge', true)
+      if (normalizedKey === 's') setInputState('smash', true)
     }
 
-    const keyUp = (e) => {
-      if (!isAllowedKey(e.code)) return
-      e.preventDefault()
+    const handleKeyUp = (event) => {
+      if (!isAllowedKey(event.code)) return
+      event.preventDefault()
+
+      const normalizedKey = event.key.toLowerCase()
+
+      if (event.key === ' ') endJumpSlideInput()
+      if (normalizedKey === 'shift') setInputState('charge', false)
+      if (normalizedKey === 's') setInputState('smash', false)
     }
 
     const keyOptions = { passive: false }
-    window.addEventListener('keydown', keyDown, keyOptions)
-    window.addEventListener('keyup', keyUp, keyOptions)
+    window.addEventListener('keydown', handleKeyDown, keyOptions)
+    window.addEventListener('keyup', handleKeyUp, keyOptions)
     return () => {
-      window.removeEventListener('keydown', keyDown, keyOptions)
-      window.removeEventListener('keyup', keyUp, keyOptions)
+      window.removeEventListener('keydown', handleKeyDown, keyOptions)
+      window.removeEventListener('keyup', handleKeyUp, keyOptions)
     }
-  }, [resetGame, status])
+  }, [endJumpSlideInput, moveLane, pulseInput, resetGame, setInputState, startJumpSlideInput, status])
 
   useEffect(() => {
     if (status !== 'playing') return undefined
@@ -494,15 +603,21 @@ function App() {
           </div>
 
           <footer className="space-y-4 text-center">
+            {status !== 'playing' && (
+              <div className="mobile-controls-note rounded-2xl">
+                <p className="text-xs uppercase tracking-[0.35em] text-lime-200">Mobile controls</p>
+                <p className="text-xs text-lime-100/80">Use the bottom touch pad: steer left/right, hold Charge, tap or hold Jump/Slide like Space, and tap Smash.</p>
+              </div>
+            )}
             <p className="min-h-6 text-sm text-lime-50">{message}</p>
             <div className="flex items-center justify-center gap-3">
-              <button className="control rounded-full" onClick={() => setLaneIndex((current) => clamp(current - 1, 0, LANES.length - 1))} disabled={status !== 'playing'}>
+              <button className="control rounded-full" onClick={() => moveLane(-1)} disabled={status !== 'playing'}>
                 ←
               </button>
               <button className="start-button rounded-full px-7 py-3 font-black" onClick={() => resetGame({ startSound: true })}>
                 {status === 'playing' ? 'Restart' : gameOver ? 'Try Again' : 'Begin dash'}
               </button>
-              <button className="control rounded-full" onClick={() => setLaneIndex((current) => clamp(current + 1, 0, LANES.length - 1))} disabled={status !== 'playing'}>
+              <button className="control rounded-full" onClick={() => moveLane(1)} disabled={status !== 'playing'}>
                 →
               </button>
             </div>
@@ -526,6 +641,73 @@ function App() {
             <p className="text-xs text-lime-100/80">Controls: ←/A and →/D steer • W charge • S slide • Enter/Space start • G debug.</p>
             <p className="text-[0.65rem] text-lime-100/60" data-debug-seed={runSeed}>Debug seed {runSeed}</p>
           </footer>
+        </div>
+
+        <div className="touch-controls" aria-label="Touch game controls">
+          <div className="touch-steer" aria-label="Steering controls">
+            <button
+              className="touch-control touch-steer-button"
+              type="button"
+              aria-label="Steer left"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('left', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              ←
+            </button>
+            <button
+              className="touch-control touch-steer-button"
+              type="button"
+              aria-label="Steer right"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('right', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              →
+            </button>
+          </div>
+          <div className="touch-actions" aria-label="Action controls">
+            <button
+              className="touch-control touch-action-button"
+              type="button"
+              aria-label="Charge"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('charge', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              Charge
+            </button>
+            <button
+              className="touch-control touch-action-button touch-action-primary"
+              type="button"
+              aria-label="Jump or slide"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('jumpSlide', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              Jump/Slide
+            </button>
+            <button
+              className="touch-control touch-action-button"
+              type="button"
+              aria-label="Smash"
+              disabled={status !== 'playing'}
+              onPointerDown={(event) => startTouchInput('smash', event)}
+              onPointerUp={endTouchInput}
+              onPointerCancel={endTouchInput}
+              onLostPointerCapture={endTouchInput}
+            >
+              Smash
+            </button>
+          </div>
         </div>
       </section>
     </main>
