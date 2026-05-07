@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { LANES, OBSTACLE_INTERVAL, POWER_UP_INTERVAL, START_SPEED } from '../config.js'
-import { addFruitLine, buildLevel, LEVEL_START_Y, POWER_UP_START_Y } from '../level.js'
+import { addFruitLine, buildLevel, LEVEL_START_Y, OBSTACLE_TYPES, POWER_UP_START_Y } from '../level.js'
 
 test('buildLevel creates a deterministic starting level', () => {
   const level = buildLevel()
@@ -60,4 +60,15 @@ test('addFruitLine returns a new level with configured fruit obstacles', () => {
     { lane: 0, y: 20, type: 'banana', speed: 6 },
     { lane: 1, y: 24, type: 'banana', speed: 6 },
   ])
+})
+
+
+test('obstacle type collider definitions cover hazards and keep rotated logs/branches oriented', () => {
+  assert.equal(OBSTACLE_TYPES.log.collider.shape, 'obb')
+  assert.equal(OBSTACLE_TYPES.branch.collider.shape, 'obb')
+  assert.equal(OBSTACLE_TYPES.crate.collider.shape, 'aabb')
+  assert.equal(OBSTACLE_TYPES.croc.collider.shape, 'aabb')
+  assert.equal(OBSTACLE_TYPES.gate.collider.shape, 'aabb')
+  assert.ok(OBSTACLE_TYPES.log.collider.padding < 0)
+  assert.ok(OBSTACLE_TYPES.branch.collider.padding < 0)
 })
